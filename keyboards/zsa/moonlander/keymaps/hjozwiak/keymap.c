@@ -15,18 +15,50 @@
  * You should have received a copy of the GNU General Public License
  * along with this program.  If not, see <http://www.gnu.org/licenses/>.
  */
-
-
-
-#include "keycodes.h"
-#include "process_tap_dance.h"
 #include QMK_KEYBOARD_H
 #include "version.h"
+typedef struct {
+    uint16_t tap;
+    uint16_t hold;
+    uint16_t held;
+} tap_dance_tap_hold_t;
+void tap_dance_tap_hold_finished(tap_dance_state_t *state, void *user_data) {
+    tap_dance_tap_hold_t *tap_hold = (tap_dance_tap_hold_t *)user_data;
+
+    if (state->pressed) {
+        if (state->count == 1
+#ifndef PERMISSIVE_HOLD
+            && !state->interrupted
+#endif
+        ) {
+            register_code16(tap_hold->hold);
+            tap_hold->held = tap_hold->hold;
+        } else {
+            register_code16(tap_hold->tap);
+            tap_hold->held = tap_hold->tap;
+        }
+    }
+}
+
+void tap_dance_tap_hold_reset(tap_dance_state_t *state, void *user_data) {
+    tap_dance_tap_hold_t *tap_hold = (tap_dance_tap_hold_t *)user_data;
+
+    if (tap_hold->held) {
+        unregister_code16(tap_hold->held);
+        tap_hold->held = 0;
+    }
+}
+
+#define ACTION_TAP_DANCE_TAP_HOLD(tap, hold)                                        \
+    {                                                                               \
+        .fn        = {NULL, tap_dance_tap_hold_finished, tap_dance_tap_hold_reset}, \
+        .user_data = (void *)&((tap_dance_tap_hold_t){tap, hold, 0}),               \
+    }
 
 enum layers {
-    BASE,  // default layer
-    SYMB,  // symbols
-    MDIA,  // media keys
+    BASE, // default layer
+    SYMB, // symbols
+    MDIA, // media keys
 };
 
 enum custom_keycodes {
@@ -35,11 +67,13 @@ enum custom_keycodes {
 enum dancers {
     HOME_PGUP,
     END_PGDN,
+    BSPC_CAPS_LOCK,
 };
 
 tap_dance_action_t tap_dance_actions[] = {
-    [HOME_PGUP] = ACTION_TAP_DANCE_DOUBLE(KC_PAGE_UP, KC_HOME),
-    [END_PGDN] = ACTION_TAP_DANCE_DOUBLE(KC_PAGE_DOWN, KC_END),
+    [HOME_PGUP]      = ACTION_TAP_DANCE_DOUBLE(KC_PAGE_UP, KC_HOME),
+    [END_PGDN]       = ACTION_TAP_DANCE_DOUBLE(KC_PAGE_DOWN, KC_END),
+    [BSPC_CAPS_LOCK] = ACTION_TAP_DANCE_TAP_HOLD(KC_BSPC, KC_CAPS_LOCK),
 };
 
 // clang-format off
@@ -47,7 +81,7 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
     [BASE] = LAYOUT(
                     KC_EQL,  KC_1,    KC_2,    KC_3,    KC_4,    KC_5,    TD(HOME_PGUP),           TD(END_PGDN), KC_6,    KC_7,    KC_8,    KC_9,    KC_0,    KC_MINS,
         KC_DEL,  KC_Q,    KC_W,    KC_E,    KC_R,    KC_T,    TG(SYMB),         TG(SYMB), KC_Y,    KC_U,    KC_I,    KC_O,    KC_P,    KC_BSLS,
-        MT(KC_CAPS_LOCK, KC_BSPC), KC_A,    KC_S,    KC_D,    KC_F,    KC_G,    KC_HYPR,           KC_MEH,  KC_H,    KC_J,    KC_K,    KC_L,    LT(MDIA, KC_SCLN), LGUI_T(KC_QUOT),
+                    TD(BSPC_CAPS_LOCK), KC_A,    KC_S,    KC_D,    KC_F,    KC_G,    KC_HYPR,           KC_MEH,  KC_H,    KC_J,    KC_K,    KC_L,    LT(MDIA, KC_SCLN), LGUI_T(KC_QUOT),
         KC_LSFT, LCTL_T(KC_Z),KC_X,KC_C,    KC_V,    KC_B,                                KC_N,    KC_M,    KC_COMM, KC_DOT,  RCTL_T(KC_SLSH), KC_RSFT,
     LT(SYMB,KC_GRV),WEBUSB_PAIR,A(KC_LSFT),KC_LEFT, KC_RGHT,  LALT_T(KC_APP),    RCTL_T(KC_ESC),   KC_UP,   KC_DOWN, KC_LBRC, KC_RBRC, MO(SYMB),
                                             KC_SPC,  KC_BSPC, KC_LGUI,           KC_LALT,  KC_TAB,  KC_ENT
@@ -73,12 +107,15 @@ const uint16_t PROGMEM keymaps[][MATRIX_ROWS][MATRIX_COLS] = {
 };
 
 bool process_record_user(uint16_t keycode, keyrecord_t *record) {
-    if (record->event.pressed) {
-        switch (keycode) {
-        case VRSN:
-            SEND_STRING (QMK_KEYBOARD "/" QMK_KEYMAP " @ " QMK_VERSION);
-            return false;
-        }
+  tap_dance_action_t *action;
+  switch (keycode) {
+  case TD(BSPC_CAPS_LOCK):
+    action = &tap_dance_actions[QK_TAP_DANCE_GET_INDEX(keycode)];
+    if (!record->event.pressed && action->state.count && !action->state.finished) {
+      tap_dance_tap_hold_t *tap_hold = (tap_dance_tap_hold_t *)action->user_data;
+      tap_code16(tap_hold->tap);
     }
+  
+  }
     return true;
 }
